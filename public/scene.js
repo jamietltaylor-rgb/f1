@@ -4,7 +4,8 @@ import { OrbitControls } from "./vendor/OrbitControls.js";
 import { buildCar } from "./cars.js";
 import { asphaltTexture, buildTerrain, gravelTexture, grassTexture, makeClouds, makeHills, makeSky, scatterTrees } from "./environment.js";
 
-export const TRACK_WIDTH = 15; // Silverstone runs about 12-18 m wide
+import { TRACK_WIDTH } from "./constants.js";
+export { TRACK_WIDTH };
 
 export function createScene(canvas) {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: "high-performance" });

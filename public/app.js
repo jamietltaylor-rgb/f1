@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { createScene } from "./scene.js";
 import { SILVERSTONE } from "./silverstone.js";
 import { Demo } from "./demo.js";
+import { separation } from "./separate.js";
 import { Replay, outlineFromRows } from "./replay.js";
 import { getDrivers, getLaps, getLocation, getPositions, getRaceControl, listSessions } from "./openf1.js";
 import { buildVenue } from "./venue.js";
@@ -93,12 +94,13 @@ function isInPits(pos) {
 }
 
 // ---------- sources ----------
+const nudges = new Map();
 function startDemo() {
   loadToken++;
   const pts = SILVERSTONE.points.map(([x, y]) => new THREE.Vector3(x, 0, -y));
   const track = view.setTrack(pts);
   view.fitCamera();
-  setSource(new Demo(track.curve, track.length));
+  setSource(new Demo(track));
   makeVenue();
   now = 0;
   playing = true;
@@ -372,11 +374,21 @@ function frame(t) {
         } else { buffering = true; status("Buffering…", { sticky: true }); }
       } else now = next;
     }
-    for (const c of source.cars) {
+    const items = source.cars.map((c) => {
       const p = source.sample(c.id, now);
-      const m = p ? source.motion(c.id, now) : null;
-      view.placeCar(c.id, p, m?.dir, dt);
-    }
+      return { c, p, m: p ? source.motion(c.id, now) : null };
+    });
+    // GPS and interpolation can put two cars on top of each other: ease them apart so bodies never overlap
+    const live = items.filter((q) => q.p && q.m);
+    const push = separation(live.map((q) => ({ x: q.p[0], z: q.p[2], heading: -Math.atan2(q.m.dir[2], q.m.dir[0]) })));
+    const k = 1 - Math.exp(-dt * 8);
+    live.forEach((q, i) => {
+      const o = (nudges.get(q.c.id) || [0, 0]);
+      o[0] += (push[i][0] - o[0]) * k; o[1] += (push[i][1] - o[1]) * k;
+      nudges.set(q.c.id, o);
+      q.p = [q.p[0] + o[0], q.p[1], q.p[2] + o[1]];
+    });
+    for (const q of items) view.placeCar(q.c.id, q.p, q.m?.dir, dt);
     updateCrashes();
     if (camMode === "stand") standCamera(dt); else followCamera();
     if (isReplay) {

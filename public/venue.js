@@ -1,7 +1,7 @@
 // Scenery that makes the track feel like a circuit: pit lane, garages, a paddock and grandstands with a crowd.
 // Placement is automatic (it only needs the track's centre line), so it works for any circuit and is approximate.
 import * as THREE from "three";
-import { TRACK_WIDTH } from "./scene.js";
+import { TRACK_WIDTH } from "./constants.js";
 
 const UNIT = new THREE.BoxGeometry(1, 1, 1);
 const mat = (c, extra = {}) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.85, ...extra });
