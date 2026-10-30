@@ -135,7 +135,7 @@ async function loadReplay() {
     view.setTrack(outline.map((p) => new THREE.Vector3(p[0], p[1], p[2])));
     view.fitCamera();
 
-    const durationMs = minutes * 60_000;
+    const durationMs = Math.min(minutes * 60_000, Math.max(60_000, Date.parse(s.date_end) - startMs));
     const replay = new Replay({ session: s, startMs, durationMs, drivers });
     setSource(replay);
 
