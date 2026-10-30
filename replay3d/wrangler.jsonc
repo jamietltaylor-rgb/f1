@@ -1,0 +1,5 @@
+{
+  "name": "f1-replay-3d",
+  "compatibility_date": "2025-01-01",
+  "assets": { "directory": "./public" }
+}
