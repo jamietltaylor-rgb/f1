@@ -120,3 +120,62 @@ export function outlineFromRows(rows) {
     return [0, 1, 2].map((k) => (a[k] + 2 * p[k] + b[k]) / 4);
   });
 }
+
+// ---------- crash detection ----------
+// OpenF1 has no "crash" flag, so a crash is inferred from the movement data: a car doing 110+ km/h that is
+// almost stopped within 4.5 s and then stays stopped for 8 s. Stops in the pit area are ignored by the caller,
+// and a sudden stop is a crash, confirmed when race control also mentions that car around that time. A slow stop is only reported as 'stopped' if race control mentions the car.
+
+/** t: ms timestamps, p: world positions [x,y,z]. Returns [{ t, pos, until }] */
+export function findStops(t, p) {
+  const n = t.length;
+  const v = new Float32Array(n).fill(NaN);
+  for (let i = 1; i < n; i++) {
+    const dt = (t[i] - t[i - 1]) / 1000;
+    if (dt > 0 && dt < 2.5) v[i] = Math.hypot(p[i][0] - p[i - 1][0], p[i][1] - p[i - 1][1], p[i][2] - p[i - 1][2]) / dt;
+  }
+  const out = [];
+  let i = 1;
+  while (i < n) {
+    if (!(v[i] >= 30)) { i++; continue; }
+    const limit = t[i] + 4500;
+    let stop = -1;
+    for (let j = i + 1; j < n && t[j] <= limit; j++) if (v[j] <= 5) { stop = j; break; }
+    if (stop < 0) { i++; continue; }
+    const need = t[stop] + 8000;
+    let k = stop, still = true;
+    for (; k < n && t[k] <= need; k++) if (v[k] > 4) { still = false; break; }
+    if (!still) { i = stop + 1; continue; }
+    if (k >= n && t[n - 1] < need) { i++; continue; } // not enough data after the stop yet
+    let m = k;
+    while (m < n && !(v[m] > 10)) m++;
+    // how violent was it? average slow-down from the fastest point in the 3 s before the stop
+    let jp = stop;
+    for (let j = stop; j >= 0 && t[j] >= t[stop] - 3000; j--) if (v[j] > v[jp] || !(v[jp] >= 0)) jp = j;
+    const secs = Math.max(0.25, (t[stop] - t[jp]) / 1000);
+    const hard = (v[jp] - v[stop]) / secs >= 12;
+    out.push({ t: t[stop], pos: p[stop], until: m < n ? t[m] : Infinity, hard });
+    i = Math.max(k, stop + 1);
+  }
+  return out;
+}
+
+Replay.prototype.detectCrashes = function (isInPits, notes = []) {
+  const events = [];
+  for (const c of this.cars) {
+    const d = this.data.get(c.id);
+    if (!d || d.t.length < 10) continue;
+    for (const s of findStops(d.t, d.p)) {
+      if (isInPits(s.pos)) continue;
+      const num = Number(c.id);
+      const confirmed = notes.some((r) => Math.abs(Date.parse(r.date) - s.t) <= 90_000 && Number(r.driver_number) === num && /STOPPED|INCIDENT|COLLISION|CONTACT|SPUN|CRASH|OFF TRACK|RETIRE/i.test(String(r.message || "")));
+      if (!s.hard && !confirmed) continue; // coasting to a halt is a breakdown, not worth shouting about
+      const level = s.hard ? (confirmed ? 2 : 1) : 3;
+      events.push({ id: c.id, label: c.label, t: s.t, until: s.until, confirmed, level });
+    }
+  }
+  events.sort((a, b) => a.t - b.t);
+  this.events = events;
+};
+
+Replay.prototype.events = [];

@@ -3,11 +3,14 @@ import { createScene } from "./scene.js";
 import { SILVERSTONE } from "./silverstone.js";
 import { Demo } from "./demo.js";
 import { Replay, outlineFromRows } from "./replay.js";
-import { getDrivers, getLaps, getLocation, getPositions, listSessions } from "./openf1.js";
+import { getDrivers, getLaps, getLocation, getPositions, getRaceControl, listSessions } from "./openf1.js";
+import { buildVenue } from "./venue.js";
 
 const $ = (id) => document.getElementById(id);
 const view = createScene($("view"));
-window.__view = view; // handy for debugging in the browser console
+window.__view = view;
+Object.defineProperty(window, "__venue", { get: () => venue });
+Object.defineProperty(window, "__events", { get: () => source?.events?.map((e) => `${e.label} ${e.confirmed}`) }); // handy for debugging in the browser console
 
 const CHUNK_MS = 60_000;
 let source = null;
@@ -20,6 +23,13 @@ let followActive = false;
 const lastFollow = new THREE.Vector3();
 let loadToken = 0;
 let sessions = [];
+let venue = null;
+let standChoice = "auto";
+let curStand = null;
+let zoomMul = 1;
+let lastNow = 0;
+let alertTimer = 0;
+const lookAt = new THREE.Vector3();
 
 // ---------- status line ----------
 let statusTimer = 0;
@@ -33,6 +43,32 @@ function status(text, { error = false, sticky = false } = {}) {
   if (!sticky) statusTimer = setTimeout(() => el.classList.remove("on"), error ? 9000 : 3500);
 }
 
+// ---------- venue (pits, paddock, grandstands) ----------
+function makeVenue(corners = []) {
+  const track = view.getTrack();
+  venue = buildVenue(view.venueGroup, track, source.cars.map((c) => c.colour), corners);
+  curStand = null;
+  const sel = $("stand");
+  sel.innerHTML = "";
+  sel.add(new Option("Auto (nearest)", "auto"));
+  venue.stands.forEach((s, i) => sel.add(new Option(s.name, String(i))));
+  standChoice = "auto";
+}
+
+// where is a point relative to the track: used to ignore cars stopped in the pit area
+function isInPits(pos) {
+  const t = view.getTrack();
+  if (!t) return false;
+  const C = t.centre, n = C.length, ds = t.length / n;
+  let bi = 0, bd = Infinity;
+  for (let i = 0; i < n; i++) {
+    const d = Math.hypot(C[i].x - pos[0], C[i].z - pos[2]);
+    if (d < bd) { bd = d; bi = i; }
+  }
+  const alongLine = Math.min(bi, n - bi) * ds; // metres from the start/finish line
+  return alongLine < 420 && bd > 9;
+}
+
 // ---------- sources ----------
 function startDemo() {
   loadToken++;
@@ -41,6 +77,7 @@ function startDemo() {
   const track = view.setTrack(pts, corners);
   view.fitCamera();
   setSource(new Demo(track.curve, track.length));
+  makeVenue(corners);
   now = 0;
   playing = true;
   updatePlayButton();
@@ -48,6 +85,7 @@ function startDemo() {
 }
 
 function setSource(src) {
+  if (camMode !== "free") setCam("free");
   source = src;
   view.setCars(src.cars);
   followId = null;
@@ -91,10 +129,7 @@ function refreshOrder() {
 function selectCar(id, goFollow) {
   followId = id;
   followActive = false;
-  if (goFollow) {
-    camMode = "follow";
-    $("cam").value = "follow";
-  }
+  if (goFollow && camMode === "free") setCam("follow");
   refreshOrder();
 }
 
@@ -138,6 +173,8 @@ async function loadReplay() {
     const durationMs = Math.min(minutes * 60_000, Math.max(60_000, Date.parse(s.date_end) - startMs));
     const replay = new Replay({ session: s, startMs, durationMs, drivers });
     setSource(replay);
+    makeVenue();
+    let notes = [];
 
     const chunks = Math.ceil(durationMs / CHUNK_MS);
     for (let i = 0; i < chunks; i++) {
@@ -147,6 +184,9 @@ async function loadReplay() {
       const rows = await getLocation(s.session_key, from, to);
       if (token !== loadToken) return;
       replay.addLocation(rows, to);
+      if (i === 0) notes = await getRaceControl(s.session_key).catch(() => []);
+      if (token !== loadToken) return;
+      replay.detectCrashes(isInPits, notes);
       if (i === 0) {
         now = startMs;
         playing = true;
@@ -236,16 +276,40 @@ $("play").addEventListener("click", () => { playing = !playing; updatePlayButton
 $("speed").addEventListener("change", (e) => { speed = Number(e.target.value); });
 $("size").addEventListener("input", (e) => view.setCarScale(Number(e.target.value)));
 $("reset").addEventListener("click", () => {
-  camMode = "free";
-  $("cam").value = "free";
-  followActive = false;
+  setCam("free");
   view.fitCamera();
 });
-$("cam").addEventListener("change", (e) => {
-  camMode = e.target.value;
+function setCam(mode) {
+  const leaving = camMode;
+  camMode = mode;
+  $("cam").value = mode;
   followActive = false;
-  if (camMode === "follow" && !followId && source) selectCar(source.order(now)[0]?.id ?? source.cars[0]?.id, false);
-});
+  $("standLabel").hidden = mode !== "stand";
+  if (leaving === "stand" && mode !== "stand") {
+    view.controls.enabled = true;
+    view.camera.fov = 50;
+    view.camera.updateProjectionMatrix();
+    view.fitCamera();
+  }
+  if (mode === "stand") {
+    if (!venue?.stands.length) { status("This track has no room for grandstands.", { error: true }); setCam("free"); return; }
+    view.controls.enabled = false;
+    zoomMul = 1;
+    curStand = null;
+    const id = followId ?? source?.order(now)[0]?.id;
+    const c = id && view.cars.get(id);
+    if (c) lookAt.copy(c.pos);
+    if (!followId && id) followId = id;
+  }
+  if (mode === "follow" && !followId && source) selectCar(source.order(now)[0]?.id ?? source.cars[0]?.id, false);
+}
+$("cam").addEventListener("change", (e) => setCam(e.target.value));
+$("stand").addEventListener("change", (e) => { standChoice = e.target.value; curStand = null; });
+$("view").addEventListener("wheel", (e) => {
+  if (camMode !== "stand") return;
+  e.preventDefault();
+  zoomMul = Math.min(4, Math.max(0.4, zoomMul * Math.exp(-e.deltaY * 0.001)));
+}, { passive: false });
 $("hideDrivers").addEventListener("click", () => $("drivers").classList.toggle("collapsed"));
 $("scrub").addEventListener("input", (e) => {
   if (!source || source.kind !== "replay") return;
@@ -289,7 +353,8 @@ function frame(t) {
       const m = p ? source.motion(c.id, now) : null;
       view.placeCar(c.id, p, m?.dir);
     }
-    followCamera();
+    updateCrashes();
+    if (camMode === "stand") standCamera(dt); else followCamera();
     if (isReplay) {
       const f = (now - source.startMs) / source.durationMs;
       if (document.activeElement !== $("scrub")) $("scrub").value = String(Math.round(f * 1000));
@@ -301,16 +366,61 @@ function frame(t) {
   requestAnimationFrame(frame);
 }
 
+function updateCrashes() {
+  const events = source.events || [];
+  const flagged = new Map();
+  for (const ev of events) {
+    if (now >= ev.t && now < ev.until) flagged.set(ev.id, ev.level);
+    if (playing && lastNow < ev.t && now >= ev.t && now - ev.t < 5000) {
+      announce(ev.level === 2 ? `${ev.label} has crashed` : ev.level === 1 ? `${ev.label} has stopped suddenly, possible crash` : `${ev.label} has stopped on track`);
+    }
+  }
+  lastNow = now;
+  for (const c of source.cars) view.setCrashed(c.id, flagged.get(c.id) || 0);
+  for (const li of $("driverList").children) li.classList.toggle("crashed", flagged.has(li.dataset.id));
+}
+
+function announce(text) {
+  const el = $("alert");
+  el.textContent = text;
+  el.classList.add("on");
+  clearTimeout(alertTimer);
+  alertTimer = setTimeout(() => el.classList.remove("on"), 8000);
+}
+
+function standCamera(dt) {
+  const id = followId ?? source.order(now)[0]?.id;
+  const c = id && view.cars.get(id);
+  if (!c || !c.root.visible) return;
+  const stands = venue.stands;
+  let stand;
+  if (standChoice === "auto") {
+    let best = stands[0], bd = Infinity;
+    for (const s of stands) { const d = s.seat.distanceTo(c.pos); if (d < bd) { bd = d; best = s; } }
+    if (!curStand || curStand.seat.distanceTo(c.pos) > bd * 1.5) curStand = best;
+    stand = curStand;
+  } else stand = stands[Number(standChoice)] || stands[0];
+  view.camera.position.copy(stand.seat);
+  lookAt.lerp(c.pos, 1 - Math.pow(0.002, dt));
+  view.controls.target.copy(lookAt);
+  const dist = Math.max(10, view.camera.position.distanceTo(c.pos));
+  view.camera.fov = Math.min(55, Math.max(5, (2 * Math.atan(26 / dist) * 180) / Math.PI / zoomMul));
+  view.camera.updateProjectionMatrix();
+  const m = source.motion(followId ?? id, now);
+  $("hud").textContent = `${c.info.label} ${m ? Math.round(m.kmh) + " km/h" : ""} · ${stand.name}`;
+}
+
 function followCamera() {
   if (camMode !== "follow" || !followId) { $("hud").textContent = ""; return; }
+  view.camera.fov = 50;
   const c = view.cars.get(followId);
   if (!c || !c.root.visible) return;
   const m = source.motion(followId, now);
   $("hud").textContent = m ? `${c.info.label} ${Math.round(m.kmh)} km/h` : c.info.label;
   if (!followActive) {
-    const k = view.carScale / 3;
+    const k = Math.max(1, view.carScale);
     const fwd = new THREE.Vector3(Math.cos(c.heading), 0, -Math.sin(c.heading));
-    view.camera.position.copy(c.pos).addScaledVector(fwd, -26 * k).add(new THREE.Vector3(0, 9 * k, 0));
+    view.camera.position.copy(c.pos).addScaledVector(fwd, -15 * k).add(new THREE.Vector3(0, 5.5 * k, 0));
     view.controls.target.copy(c.pos);
     lastFollow.copy(c.pos);
     followActive = true;

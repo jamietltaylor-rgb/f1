@@ -50,3 +50,4 @@ export const getLaps = (sk, driver) => get("laps", [`session_key=${sk}`, `driver
 export const getLocation = (sk, fromMs, toMs, driver) =>
   get("location", [`session_key=${sk}`, ...(driver ? [`driver_number=${driver}`] : []), `date>=${iso(fromMs)}`, `date<${iso(toMs)}`]);
 export const getPositions = (sk, toMs) => get("position", [`session_key=${sk}`, `date<${iso(toMs)}`]);
+export const getRaceControl = (sk) => get("race_control", [`session_key=${sk}`]);

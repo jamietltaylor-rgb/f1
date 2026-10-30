@@ -46,11 +46,25 @@ export class Demo {
     this.lapTime = this.cum[N];
     this.N = N;
     this._tmp = new THREE.Vector3();
+    // a scripted crash so the warning can be seen: car 7 stops on track 40 s in
+    this.crashAt = 40000;
+    this.events = [{ id: "7", label: "7", t: this.crashAt, until: Infinity, confirmed: true, level: 2 }];
   }
 
   ready() { return true; }
 
   _state(id, tMs) {
+    const i = Number(id) - 1;
+    if (id === "7" && tMs > this.crashAt) {
+      const frozen = this._state0(id, this.crashAt);
+      const ease = Math.min(1, (tMs - this.crashAt) / 3500);
+      const extra = (1 - (1 - ease) * (1 - ease)) * (45 / this.length); // slides ~45 m to a stop
+      return { u: frozen.u + extra, total: frozen.total, i };
+    }
+    return this._state0(id, tMs);
+  }
+
+  _state0(id, tMs) {
     const i = Number(id) - 1;
     const pace = 1 - (i % 10) * 0.0018;
     const tau = (tMs / 1000) * pace - i * 0.55;

@@ -26,6 +26,7 @@
   </form>
 </header>
 
+<div id="alert" role="alert"></div>
 <div id="status" role="status"></div>
 
 <aside id="drivers" aria-label="Drivers">
@@ -38,8 +39,9 @@
   <input id="scrub" type="range" min="0" max="1000" value="0" step="1" aria-label="Replay position">
   <span id="clock">0:00 / 0:00</span>
   <label>Speed <select id="speed"><option>0.5</option><option selected>1</option><option>2</option><option>5</option><option>10</option><option>20</option></select></label>
-  <label>Camera <select id="cam"><option value="free">Free</option><option value="follow">Follow car</option></select></label>
-  <label>Car size <input id="size" type="range" min="1" max="8" step="0.5" value="3"></label>
+  <label>Camera <select id="cam"><option value="free">Free</option><option value="follow">Follow car</option><option value="stand">Grandstand view</option></select></label>
+  <label id="standLabel" hidden>Stand <select id="stand"><option value="auto">Auto (nearest)</option></select></label>
+  <label>Car size <input id="size" type="range" min="1" max="6" step="0.5" value="1" title="1 = true size"></label>
   <button type="button" id="reset">Reset view</button>
   <span id="hud"></span>
 </footer>

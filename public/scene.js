@@ -31,10 +31,12 @@ export function createScene(canvas) {
   world.add(trackGroup);
   const carGroup = new THREE.Group();
   world.add(carGroup);
+  const venueGroup = new THREE.Group();
+  world.add(venueGroup);
 
   let track = null; // { curve, length, box, sphere, groundY }
   const cars = new Map(); // id -> car object
-  let carScale = 3;
+  let carScale = 1;
   let zoomK = 1;
 
   const mats = { cars: new Map() };
@@ -117,8 +119,39 @@ export function createScene(canvas) {
     tex.colorSpace = THREE.SRGBColorSpace;
     const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true, sizeAttenuation: false }));
     s.scale.set(0.06, 0.024, 1);
+    s.userData.base = [0.06, 0.024];
+    s.center.set(0.5, 0);
     s.renderOrder = 10;
     return s;
+  }
+
+  const tagTex = {};
+  function crashTag(text) {
+    if (!tagTex[text]) {
+      const c = document.createElement("canvas");
+      c.width = 256;
+      c.height = 64;
+      const g = c.getContext("2d");
+      g.fillStyle = "#d4140a";
+      g.beginPath();
+      g.roundRect(4, 6, 248, 52, 12);
+      g.fill();
+      g.fillStyle = "#fff";
+      g.font = "800 38px system-ui, sans-serif";
+      g.textAlign = "center";
+      g.textBaseline = "middle";
+      g.fillText(text, 128, 33);
+      const t = new THREE.CanvasTexture(c);
+      t.colorSpace = THREE.SRGBColorSpace;
+      tagTex[text] = t;
+    }
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tagTex[text], depthTest: false, transparent: true, sizeAttenuation: false }));
+    sp.scale.set(0.1, 0.025, 1);
+    sp.userData.base = [0.1, 0.025];
+    sp.center.set(0.5, -1.25);
+    sp.renderOrder = 11;
+    sp.visible = false;
+    return sp;
   }
 
   function clearCars() {
@@ -143,9 +176,13 @@ export function createScene(canvas) {
       const label = labelSprite(info.label);
       label.position.y = 2.6;
       root.add(label);
+      const tagYes = crashTag("CRASHED");
+      const tagMaybe = crashTag("CRASH?");
+      const tagStop = crashTag("STOPPED");
+      root.add(tagYes, tagMaybe, tagStop);
       root.userData.carId = info.id;
       carGroup.add(root);
-      cars.set(info.id, { id: info.id, root, model, label, heading: 0, pitch: 0, visible: false, pos: new THREE.Vector3(), info });
+      cars.set(info.id, { id: info.id, root, model, label, tagYes, tagMaybe, tagStop, crash: 0, heading: 0, pitch: 0, visible: false, pos: new THREE.Vector3(), info });
     }
     applyCarScale();
   }
@@ -153,13 +190,23 @@ export function createScene(canvas) {
   function applyCarScale() {
     for (const c of cars.values()) {
       c.model.scale.setScalar(carScale * zoomK);
-      c.label.position.y = 2.2 * carScale * zoomK + 1;
+      c.label.position.y = 2.2 * carScale * zoomK + 1.2;
+      c.tagYes.position.y = c.tagMaybe.position.y = c.tagStop.position.y = c.label.position.y;
     }
   }
 
   function setCarScale(v) {
     carScale = v;
     applyCarScale();
+  }
+
+  function setCrashed(id, level) {
+    const c = cars.get(id);
+    if (!c) return;
+    c.crash = level;
+    c.tagYes.visible = level === 2;
+    c.tagMaybe.visible = level === 1;
+    c.tagStop.visible = level === 3;
   }
 
   function placeCar(id, pos, dir) {
@@ -236,6 +283,7 @@ export function createScene(canvas) {
   /** points: Vector3[] along the middle of the road, in driving order (closed loop). */
   function setTrack(points, corners = []) {
     disposeGroup(trackGroup);
+    disposeGroup(venueGroup);
     const curve = new THREE.CatmullRomCurve3(points, true, "centripetal");
     const length = curve.getLength();
     const n = Math.max(300, Math.min(2400, Math.round(length / 5)));
@@ -291,6 +339,7 @@ export function createScene(canvas) {
     for (const c of corners) {
       const s = labelSprite(c.name);
       s.scale.set(0.085, 0.032, 1);
+      s.userData.base = [0.085, 0.032];
       s.position.set(c.x, (c.y ?? 0) + 24, c.z);
       trackGroup.add(s);
     }
@@ -334,7 +383,7 @@ export function createScene(canvas) {
 
   return {
     renderer, scene, camera, controls, cars, THREE,
-    setTrack, setCars, setCarScale, placeCar, fitCamera, pick, resize,
+    venueGroup, setCrashed, setTrack, setCars, setCarScale, placeCar, fitCamera, pick, resize,
     getTrack: () => track,
     get carScale() { return carScale; },
     render() {
@@ -342,6 +391,11 @@ export function createScene(canvas) {
       // keep cars visible from far away: grow them with camera distance
       const k = Math.min(10, Math.max(1, camera.position.distanceTo(controls.target) / 450));
       if (Math.abs(k - zoomK) > 0.03) { zoomK = k; applyCarScale(); }
+      // sprites that keep a constant screen size would otherwise grow when the lens zooms in
+      const lens = Math.tan((camera.fov * Math.PI) / 360) / Math.tan((50 * Math.PI) / 360);
+      scene.traverse((o) => { if (o.isSprite && o.userData.base) o.scale.set(o.userData.base[0] * lens, o.userData.base[1] * lens, 1); });
+      const pulse = 0.65 + 0.35 * Math.sin(performance.now() / 160);
+      for (const c of cars.values()) if (c.crash) (c.crash === 2 ? c.tagYes : c.crash === 1 ? c.tagMaybe : c.tagStop).material.opacity = pulse;
       renderer.render(scene, camera);
     },
   };
