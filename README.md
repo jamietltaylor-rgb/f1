@@ -7,6 +7,8 @@ Uses the free historical data from OpenF1 (https://openf1.org). No account, no k
 - Pick a finished session, a starting lap and a length, then press Load replay. The track shape is drawn from the real position data, so it works for any circuit.
 - Cars are true size next to the track (use the Car size slider to enlarge them). When zoomed far out they grow so they stay visible.
 - Camera menu: Free, Follow car, or Grandstand view, which watches the action from a seat in one of the grandstands (Auto picks the nearest; scroll to zoom the lens).
+- Silverstone's shape comes from OpenStreetMap-derived data (f1-circuits, MIT licence), so every corner is there. Real replays use the shape from the F1 position data itself, including hills.
+- Cars have wheels that spin, shadows, and a detailed body. Track, kerbs, gravel, tyre walls, barriers, trees, hills and sky are all drawn to scale (track about 15 m wide).
 - The track gets a pit lane, garages, a paddock and grandstands with a crowd. Placement is automatic and approximate.
 - Crashes: a car that goes from racing speed to stopped within a few seconds and stays stopped gets a red CRASHED or CRASH? tag and an alert. OpenF1 has no crash flag, so this is worked out from the movement data and race control messages.
 - Click a car (or a driver in the list) to follow it. Drag to turn, scroll or pinch to zoom, right-drag or two fingers to move.

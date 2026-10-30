@@ -62,19 +62,31 @@ export class Replay {
       const mid = (lo + hi) >> 1;
       if (t[mid] <= tMs) lo = mid; else hi = mid;
     }
-    const gap = t[hi] - t[lo];
-    if (gap > 4000) return p[lo]; // missing data: hold still rather than glide across the map
-    const f = (tMs - t[lo]) / gap;
-    const a = p[lo], b = p[hi];
-    return [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f];
+    const dt = t[hi] - t[lo];
+    if (dt > 4000) return p[lo]; // missing data: hold still rather than glide across the map
+    const f = (tMs - t[lo]) / dt;
+    // cubic Hermite through the neighbouring samples: gives smooth motion instead of straight-line steps
+    const slope = (k) => {
+      const a = Math.max(0, k - 1), b = Math.min(last, k + 1), span = t[b] - t[a];
+      if (span <= 0 || span > 8000) return null;
+      return [(p[b][0] - p[a][0]) / span, (p[b][1] - p[a][1]) / span, (p[b][2] - p[a][2]) / span];
+    };
+    const m0 = slope(lo), m1 = slope(hi);
+    const f2 = f * f, f3 = f2 * f;
+    const h00 = 2 * f3 - 3 * f2 + 1, h10 = f3 - 2 * f2 + f, h01 = -2 * f3 + 3 * f2, h11 = f3 - f2;
+    const out = [0, 0, 0];
+    for (let i = 0; i < 3; i++) {
+      out[i] = h00 * p[lo][i] + h01 * p[hi][i] + (m0 ? h10 * dt * m0[i] : 0) + (m1 ? h11 * dt * m1[i] : 0);
+    }
+    return out;
   }
 
   /** Direction of travel and speed in km/h, from a short look either side of t. */
   motion(id, tMs) {
-    const a = this.sample(id, tMs - 200), b = this.sample(id, tMs + 200);
+    const a = this.sample(id, tMs - 150), b = this.sample(id, tMs + 150);
     if (!a || !b) return null;
     const d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
-    return { dir: d, kmh: (Math.hypot(d[0], d[1], d[2]) / 0.4) * 3.6 };
+    return { dir: d, kmh: (Math.hypot(d[0], d[1], d[2]) / 0.3) * 3.6 };
   }
 
   order(tMs) {

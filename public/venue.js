@@ -21,6 +21,7 @@ function instanced(geo, material, items) {
   });
   m.instanceMatrix.needsUpdate = true;
   if (m.instanceColor) m.instanceColor.needsUpdate = true;
+  m.castShadow = m.receiveShadow = true;
   return m;
 }
 
@@ -48,7 +49,8 @@ export function buildVenue(group, track, colours, corners = []) {
   const C = track.centre;
   const n = C.length;
   const ds = track.length / n;
-  const groundY = track.groundY;
+  const gy = (p) => track.heightAt(p.x, p.z) - 0.3; // ground level under a point
+  const obstacles = [];
   const T = [], R = [];
   for (let i = 0; i < n; i++) {
     const t = C[(i + 1) % n].clone().sub(C[(i + n - 1) % n]).setY(0).normalize();
@@ -121,10 +123,20 @@ export function buildVenue(group, track, colours, corners = []) {
     bays.push({ pos: new THREE.Vector3(p.x, y + 2.5, p.z), yaw: yaw(k), sx: bayLen - 0.6, sy: 5, sz: 9.6 });
     const f = at(k, side * (laneOff + 4.6));
     doors.push({ pos: new THREE.Vector3(f.x, y + 1.9, f.z), yaw: yaw(k), sx: bayLen - 4, sy: 3.6, sz: 0.3, color: teamColours[u % teamColours.length] ?? 0x888888 });
-    plinths.push({ pos: new THREE.Vector3(p.x, groundY + (y - groundY) / 2 - 0.05, p.z), yaw: yaw(k), sx: bayLen, sy: Math.max(0.1, y - groundY - 0.1), sz: 11 });
+    { const g0 = gy(p); plinths.push({ pos: new THREE.Vector3(p.x, g0 + (y - g0) / 2, p.z), yaw: yaw(k), sx: bayLen, sy: Math.max(0.1, y - g0), sz: 11 }); }
     upper.push({ pos: new THREE.Vector3(p.x, y + 7.5, p.z), yaw: yaw(k), sx: bayLen, sy: 5, sz: 10.4 });
     glass.push({ pos: new THREE.Vector3(f.x, y + 7.6, f.z), yaw: yaw(k), sx: bayLen - 1, sy: 3, sz: 0.2 });
     lane.push(f);
+  }
+  {
+    const kmid = Math.round(start + ((units - 1) * bayLen) / 2 / ds);
+    const pm = at(kmid, side * (laneOff + 4.5 + 4.8));
+    const frame = new THREE.Object3D();
+    frame.position.copy(pm);
+    frame.rotation.y = yaw(kmid);
+    group.add(frame);
+    frame.updateMatrixWorld(true);
+    obstacles.push({ frame, x0: -(units * bayLen) / 2 - 6, x1: (units * bayLen) / 2 + 6, z0: -7.5, z1: 7.5, top: 14 });
   }
   group.add(instanced(UNIT, mat(0xe3e5e8), bays));
   group.add(instanced(UNIT, mat(0xffffff, { roughness: 0.5 }), doors));
@@ -144,7 +156,7 @@ export function buildVenue(group, track, colours, corners = []) {
     const slabLen = 330, slabW = 70;
     const sy = base.y;
     group.add(instanced(UNIT, mat(0x8d9096), [{ pos: new THREE.Vector3(base.x, sy - 0.1, base.z), yaw: yaw(kc), sx: slabLen, sy: 0.2, sz: slabW }]));
-    group.add(instanced(UNIT, mat(0x4a4d52), [{ pos: new THREE.Vector3(base.x, groundY + (sy - groundY) / 2 - 0.2, base.z), yaw: yaw(kc), sx: slabLen, sy: Math.max(0.1, sy - groundY - 0.3), sz: slabW }]));
+    { const g0 = gy(base); group.add(instanced(UNIT, mat(0x4a4d52), [{ pos: new THREE.Vector3(base.x, g0 + (sy - g0) / 2 - 0.1, base.z), yaw: yaw(kc), sx: slabLen, sy: Math.max(0.1, sy - g0 - 0.2), sz: slabW }])); }
     const fwdV = T[((kc % n) + n) % n], rgt = R[((kc % n) + n) % n];
     const place = (a, b) => new THREE.Vector3(base.x + fwdV.x * a + rgt.x * b, sy, base.z + fwdV.z * a + rgt.z * b);
     const hosp = [], trucks = [], tents = [];
@@ -221,6 +233,7 @@ export function buildVenue(group, track, colours, corners = []) {
       const h = (r + 1) * 0.9;
       for (let z = -W / 2 + 0.6; z < W / 2 - 0.4; z += 0.8) {
         if (rnd() < 0.3) continue;
+        if (r >= 4 && Math.abs(z) < 2.6) continue; // keep the camera seat clear
         crowd.push({ pos: new THREE.Vector3(-(0.55 + r * 1.1) + 0.1, h + 0.62, z), sx: 0.42, sy: 1, sz: 0.42, color: crowdCols[Math.floor(rnd() * crowdCols.length)] });
       }
     }
@@ -240,16 +253,18 @@ export function buildVenue(group, track, colours, corners = []) {
     fence.scale.set(0.2, 1.3, W);
     fence.position.set(0.9, 0.65, 0);
     g.add(fence);
-    const found = Math.max(0, base.y - groundY - 0.1);
+    const found = Math.max(0, base.y - gy(base));
     if (found > 0.2) {
       const f = new THREE.Mesh(UNIT, mat(0x4a4d52));
       f.scale.set(tiers * 1.1 + 3, found, W + 2);
       f.position.set(-(tiers * 1.1) / 2 + 0.5, -found / 2 - 0.05, 0);
       g.add(f);
     }
+    g.traverse((o) => { if (o.isMesh) o.castShadow = o.receiveShadow = true; });
     group.add(g);
     g.updateMatrixWorld(true);
-    const seat = g.localToWorld(new THREE.Vector3(-(0.55 + 4 * 1.1), 5 * 0.9 + 1.4, 0));
+    const seat = g.localToWorld(new THREE.Vector3(-(0.55 + 4 * 1.1), 5 * 0.9 + 1.5, 0));
+    obstacles.push({ frame: g, x0: -(tiers * 1.1 + 2.2), x1: 1.4, z0: -W / 2 - 1.5, z1: W / 2 + 1.5, top: roofY + 1, own: true });
     let name = sp.label;
     if (!name) {
       let best = null, bd = 260;
@@ -262,5 +277,5 @@ export function buildVenue(group, track, colours, corners = []) {
     stands.push({ name, seat, centre: base.clone() });
     k++;
   }
-  return { stands, laneCentres: lane, hasPaddock: paddock };
+  return { stands, laneCentres: lane, hasPaddock: paddock, obstacles, pitSide: side };
 }

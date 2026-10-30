@@ -36,7 +36,7 @@ button:disabled{opacity:.5;cursor:default}
 #size{width:90px;accent-color:var(--red)}
 #clock,#hud{font-variant-numeric:tabular-nums;color:var(--mute);font-size:12px}
 #hud{color:var(--ink);min-width:70px}
-#credit{position:fixed;left:14px;bottom:2px;margin:0;font-size:10px;color:#6c767d;display:none}
+#credit{position:fixed;left:14px;bottom:2px;margin:0;font-size:10px;color:#9aa4ab;text-shadow:0 0 3px #000}
 a{color:#9bc1e6}
 @media (max-width:760px){
   #drivers{top:auto;bottom:96px;right:8px;left:8px;width:auto;max-height:150px}

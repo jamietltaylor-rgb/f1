@@ -8,6 +8,8 @@ import { buildVenue } from "./venue.js";
 
 const $ = (id) => document.getElementById(id);
 const view = createScene($("view"));
+let venue = null;
+let obstacles = [];
 window.__view = view;
 Object.defineProperty(window, "__venue", { get: () => venue });
 Object.defineProperty(window, "__events", { get: () => source?.events?.map((e) => `${e.label} ${e.confirmed}`) }); // handy for debugging in the browser console
@@ -23,11 +25,11 @@ let followActive = false;
 const lastFollow = new THREE.Vector3();
 let loadToken = 0;
 let sessions = [];
-let venue = null;
 let standChoice = "auto";
 let curStand = null;
 let zoomMul = 1;
 let lastNow = 0;
+let buffering = false;
 let alertTimer = 0;
 const lookAt = new THREE.Vector3();
 
@@ -44,16 +46,37 @@ function status(text, { error = false, sticky = false } = {}) {
 }
 
 // ---------- venue (pits, paddock, grandstands) ----------
-function makeVenue(corners = []) {
+function makeVenue() {
   const track = view.getTrack();
-  venue = buildVenue(view.venueGroup, track, source.cars.map((c) => c.colour), corners);
+  venue = buildVenue(view.venueGroup, track, source.cars.map((c) => c.colour));
+  obstacles = venue.obstacles;
   curStand = null;
   const sel = $("stand");
   sel.innerHTML = "";
   sel.add(new Option("Auto (nearest)", "auto"));
   venue.stands.forEach((s, i) => sel.add(new Option(s.name, String(i))));
   standChoice = "auto";
+  const line = track.centre[0];
+  view.addTrees((x, z) => {
+    if (Math.hypot(x - line.x, z - line.z) < 330) return true; // pit and paddock area
+    return venue.stands.some((s) => Math.hypot(x - s.centre.x, z - s.centre.z) < 90);
+  });
 }
+
+// keeps the camera out of buildings (it can swing round behind a car and end up inside a grandstand)
+const _p = new THREE.Vector3();
+view.onBeforeRender(() => {
+  if (camMode === "stand") return;
+  const cam = view.camera.position;
+  for (const o of obstacles) {
+    _p.copy(cam);
+    o.frame.worldToLocal(_p);
+    if (_p.x > o.x0 && _p.x < o.x1 && _p.z > o.z0 && _p.z < o.z1) {
+      const top = o.frame.getWorldPosition(new THREE.Vector3()).y + o.top + 1.5;
+      if (cam.y < top) cam.y = top;
+    }
+  }
+});
 
 // where is a point relative to the track: used to ignore cars stopped in the pit area
 function isInPits(pos) {
@@ -73,11 +96,10 @@ function isInPits(pos) {
 function startDemo() {
   loadToken++;
   const pts = SILVERSTONE.points.map(([x, y]) => new THREE.Vector3(x, 0, -y));
-  const corners = SILVERSTONE.corners.map(([name, x, y]) => ({ name, x, y: 0, z: -y }));
-  const track = view.setTrack(pts, corners);
+  const track = view.setTrack(pts);
   view.fitCamera();
   setSource(new Demo(track.curve, track.length));
-  makeVenue(corners);
+  makeVenue();
   now = 0;
   playing = true;
   updatePlayButton();
@@ -286,14 +308,14 @@ function setCam(mode) {
   followActive = false;
   $("standLabel").hidden = mode !== "stand";
   if (leaving === "stand" && mode !== "stand") {
-    view.controls.enabled = true;
+    view.setControlsActive(true);
     view.camera.fov = 50;
     view.camera.updateProjectionMatrix();
     view.fitCamera();
   }
   if (mode === "stand") {
     if (!venue?.stands.length) { status("This track has no room for grandstands.", { error: true }); setCam("free"); return; }
-    view.controls.enabled = false;
+    view.setControlsActive(false);
     zoomMul = 1;
     curStand = null;
     const id = followId ?? source?.order(now)[0]?.id;
@@ -344,14 +366,16 @@ function frame(t) {
       if (isReplay) {
         const end = source.startMs + source.durationMs;
         if (next >= end) { now = end; playing = false; updatePlayButton(); }
-        else if (source.ready(next + 200)) now = next;
-        else status("Buffering…", { sticky: true });
+        else if (source.ready(next + 200)) {
+          now = next;
+          if (buffering) { buffering = false; status(""); }
+        } else { buffering = true; status("Buffering…", { sticky: true }); }
       } else now = next;
     }
     for (const c of source.cars) {
       const p = source.sample(c.id, now);
       const m = p ? source.motion(c.id, now) : null;
-      view.placeCar(c.id, p, m?.dir);
+      view.placeCar(c.id, p, m?.dir, dt);
     }
     updateCrashes();
     if (camMode === "stand") standCamera(dt); else followCamera();
@@ -403,6 +427,7 @@ function standCamera(dt) {
   view.camera.position.copy(stand.seat);
   lookAt.lerp(c.pos, 1 - Math.pow(0.002, dt));
   view.controls.target.copy(lookAt);
+  view.camera.lookAt(lookAt.x, lookAt.y + 0.6, lookAt.z);
   const dist = Math.max(10, view.camera.position.distanceTo(c.pos));
   view.camera.fov = Math.min(55, Math.max(5, (2 * Math.atan(26 / dist) * 180) / Math.PI / zoomMul));
   view.camera.updateProjectionMatrix();
